@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "redline-horizon-leaderboard",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-14",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LEADERBOARD",
+        "class_name": "Leaderboard"
+      }
+    ]
+  },
+  "exports": {
+    "Leaderboard": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}
