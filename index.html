@@ -87,6 +87,9 @@ button{font-family:var(--display);cursor:pointer;color:var(--fg);border:0}
 </style>
 
 
+<button id="bLeaderboard" class="lb-secondary" title="Leaderboard">🏆 LEADERBOARD</button>
+<div id="nameModal" hidden><div class="lb-card"><div class="rec">DRIVER REGISTRATION</div><h2>ENTER YOUR DRIVER NAME</h2><div class="lb-sub">Choose the name you want shown on your local leaderboard.</div><input id="playerName" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Your name"><div class="lb-actions"><button class="go" id="bDriverStart">START ENGINE</button><button class="lb-secondary" id="bDriverCancel">CANCEL</button></div><div class="lb-sub" id="nameStatus" style="margin-top:10px;margin-bottom:0"></div></div></div>
+<div id="leaderboardModal" hidden><div class="lb-card"><div class="rec">LOCAL RANKINGS</div><h2>🏆 REDLINE HORIZON</h2><div class="lb-sub">Top 10 scores saved in this browser.</div><table class="lb-table"><thead><tr><th>RANK</th><th>DRIVER</th><th>SCORE</th></tr></thead><tbody id="lbBody"></tbody></table><div class="lb-actions"><button class="lb-secondary" id="bLbClose">CLOSE</button></div></div></div>
 <div id="wrap">
   <canvas id="c" aria-label="Redline Horizon racing game"></canvas>
 
@@ -190,14 +193,13 @@ const wrap=$('wrap'),cv=$('c'),ctx=cv.getContext('2d');
 let playerName='';
 try{playerName=localStorage.getItem('rh_player_name')||''}catch(e){}
 function cleanName(v){return String(v||'').trim().replace(/[^a-zA-Z0-9 _.-]/g,'').slice(0,24)}
-function savePlayerName(v){playerName=cleanName(v);try{localStorage.setItem('rh_player_name',playerName)}catch(e){}}
-function openDriverModal(){$('driverModal').hidden=false;$('playerName').value=playerName;$('driverStatus').textContent='';requestAnimationFrame(()=>$('playerName').focus())}
-function closeDriverModal(){$('driverModal').hidden=true}
-function beginRace(){const n=cleanName($('playerName').value);if(!n){$('driverStatus').textContent='Please enter a driver name.';return}savePlayerName(n);closeDriverModal();startGame()}
-function localLeaderboard(){let arr=[];try{arr=JSON.parse(localStorage.getItem('rh_scores')||'[]')}catch(e){}arr.push({player_name:playerName||'Driver',score:Math.floor(score)});arr.sort((a,b)=>b.score-a.score);arr=arr.slice(0,10);try{localStorage.setItem('rh_scores',JSON.stringify(arr))}catch(e){}return arr}
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function loadLeaderboard(){const body=$('lbBody'),rows=localLeaderboard();$('lbStatus').textContent='Scores are stored in this browser only.';if(!rows.length){body.innerHTML='<tr><td colspan="3" class="lb-empty">No scores yet. Be the first!</td></tr>';return}body.innerHTML=rows.map((r,i)=>'<tr class="'+(r.player_name===playerName?'me':'')+'"><td class="lb-rank">'+(i+1)+'</td><td>'+escapeHtml(r.player_name)+'</td><td>'+fmt(r.score)+'</td></tr>').join('')}
-function openLeaderboard(){$('leaderboardModal').hidden=false;loadLeaderboard()}
+function getScores(){try{return JSON.parse(localStorage.getItem('rh_scores')||'[]')}catch(e){return[]}}
+function saveName(v){playerName=cleanName(v);try{localStorage.setItem('rh_player_name',playerName)}catch(e){}}
+function openName(){$('nameModal').hidden=false;$('playerName').value=playerName;requestAnimationFrame(()=>{$('playerName').focus();$('playerName').select()})}
+function closeName(){$('nameModal').hidden=true}
+function startWithName(){const n=cleanName($('playerName').value);if(!n){$('nameStatus').textContent='Please enter a name.';return}saveName(n);closeName();startGame()}
+function recordScore(){if(!playerName)return;let a=getScores();a.push({name:playerName,score:Math.floor(score)});a.sort((x,y)=>y.score-x.score);a=a.slice(0,10);try{localStorage.setItem('rh_scores',JSON.stringify(a))}catch(e){}}
+function showLeaderboard(){const b=$('lbBody'),a=getScores();$('leaderboardModal').hidden=false;if(!a.length){b.innerHTML='<tr><td colspan="3" class="lb-empty">No scores yet.</td></tr>';return}b.innerHTML=a.map((x,i)=>'<tr class="'+(x.name===playerName?'me':'')+'"><td>'+(i+1)+'</td><td>'+String(x.name).replace(/[&<>"]/g,'')+'</td><td>'+fmt(x.score)+'</td></tr>').join('')}
 function closeLeaderboard(){$('leaderboardModal').hidden=true}
 function hud(){
   $('hKm').textContent=(pos/KM).toFixed(2);$('hScore').textContent=fmt(score);
@@ -223,7 +225,7 @@ function gameOver(){
   const rec=score>best;if(rec){best=Math.floor(score);try{localStorage.setItem('rh_best',best)}catch(e){}}
   $('oRec').textContent=rec?'NEW PERSONAL BEST':'STAGE '+(stage+1)+' · '+TH[stage%5].name;
   $('oKm').textContent=(pos/KM).toFixed(2)+' km';$('oScore').textContent=fmt(score);
-  $('oTop').textContent=Math.round(topSpd/50)+' km/h';$('oNear').textContent=nearCount;$('mBest').textContent=fmt(best);localLeaderboard();
+  $('oTop').textContent=Math.round(topSpd/50)+' km/h';$('oNear').textContent=nearCount;recordScore();$('mBest').textContent=fmt(best);localLeaderboard();
 }
 function togglePause(){
   if(state!=='play')return;paused=!paused;
@@ -234,7 +236,7 @@ function toggleMute(){muted=!muted;if(master)master.gain.value=muted?0:.85;$('bM
 function fullscreen(){try{document.fullscreenElement?document.exitFullscreen():wrap.requestFullscreen().catch(()=>{})}catch(e){}}
 const KEYMAP={ArrowUp:'up',KeyW:'up',ArrowDown:'brake',KeyS:'brake',ArrowLeft:'left',KeyA:'left',ArrowRight:'right',KeyD:'right',Space:'nitro',ShiftLeft:'nitro',ShiftRight:'nitro'};
 addEventListener('keydown',e=>{
-  if(e.target&&['INPUT','TEXTAREA'].includes(e.target.tagName))return;
+  if(e.target&&e.target.id==='playerName')return;
   const k=KEYMAP[e.code];if(k){keys[k]=true;e.preventDefault()}
   if(e.repeat)return;
   if(e.code==='KeyP'||e.code==='Escape')togglePause();
