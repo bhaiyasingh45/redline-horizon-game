@@ -2,6 +2,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <title>Redline Horizon</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,500;0,700;1,700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* Layout: full-bleed canvas racer; HUD pinned to corners like a dashboard cluster, menus as a slanted pit-board panel. Single dark look by design. */
 :root{
@@ -65,6 +66,28 @@ button{font-family:var(--display);cursor:pointer;color:var(--fg);border:0}
 #touch button.dn{background:rgba(255,255,255,.3)}
 </style>
 
+<style>
+#driverModal,#leaderboardModal{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(4,5,10,.72);backdrop-filter:blur(8px)}
+#driverModal[hidden],#leaderboardModal[hidden]{display:none!important}
+.lb-card{width:min(620px,100%);max-height:min(760px,90vh);overflow:auto;background:var(--panel);border-left:6px solid var(--cyan);padding:clamp(18px,4vw,32px);clip-path:polygon(0 0,100% 0,100% calc(100% - 26px),calc(100% - 26px) 100%,0 100%);box-shadow:0 20px 80px rgba(0,0,0,.45)}
+.lb-card h2{margin:0 0 8px;color:var(--fg)}
+.lb-sub{color:var(--dim);font-size:13px;line-height:1.4;margin-bottom:18px}
+#playerName{width:100%;box-sizing:border-box;background:#080a12;color:var(--fg);border:1px solid rgba(255,255,255,.25);padding:14px 15px;font:700 18px var(--display);outline:none}
+#playerName:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(34,211,238,.15)}
+.lb-actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.lb-secondary{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);padding:12px 18px;font-weight:700}
+.lb-table{width:100%;border-collapse:collapse;margin-top:10px;font-variant-numeric:tabular-nums}
+.lb-table th{font-size:10px;letter-spacing:.14em;color:var(--dim);text-align:left;padding:9px 6px;border-bottom:1px solid rgba(255,255,255,.12)}
+.lb-table td{padding:10px 6px;border-bottom:1px solid rgba(255,255,255,.07);font-size:14px}
+.lb-table td:last-child,.lb-table th:last-child{text-align:right}
+.lb-table tr.me{background:rgba(34,211,238,.08)}
+.lb-rank{width:40px;color:var(--amber);font-weight:700}
+.lb-empty{padding:28px 8px;text-align:center;color:var(--dim)}
+#bLeaderboard{position:absolute;top:10px;left:max(16px,env(safe-area-inset-left,0px));z-index:6;background:rgba(10,12,22,.72);border:1px solid rgba(255,255,255,.2);padding:9px 12px;font-weight:700;letter-spacing:.06em}
+.lb-status{font-size:11px;color:var(--dim);margin-top:10px;min-height:16px}
+</style>
+
+
 <div id="wrap">
   <canvas id="c" aria-label="Redline Horizon racing game"></canvas>
 
@@ -82,6 +105,39 @@ button{font-family:var(--display);cursor:pointer;color:var(--fg);border:0}
   </div>
 
   <div id="toast"></div>
+
+
+  <button id="bLeaderboard" title="Global leaderboard">🏆 LEADERBOARD</button>
+
+  <div id="driverModal" hidden>
+    <div class="lb-card">
+      <div class="rec">DRIVER REGISTRATION</div>
+      <h2>Choose your driver name</h2>
+      <div class="lb-sub">This name will appear on the global leaderboard. Keep it short and memorable.</div>
+      <input id="playerName" maxlength="24" autocomplete="nickname" placeholder="Enter your name" />
+      <div class="lb-actions">
+        <button class="go" id="bDriverStart">START ENGINE</button>
+        <button class="lb-secondary" id="bDriverCancel">CANCEL</button>
+      </div>
+      <div class="lb-status" id="driverStatus"></div>
+    </div>
+  </div>
+
+  <div id="leaderboardModal" hidden>
+    <div class="lb-card">
+      <div class="rec">GLOBAL RANKINGS</div>
+      <h2>🏆 Redline Horizon</h2>
+      <div class="lb-sub">Top 10 scores from players around the world.</div>
+      <table class="lb-table">
+        <thead><tr><th>RANK</th><th>DRIVER</th><th>SCORE</th></tr></thead>
+        <tbody id="lbBody"></tbody>
+      </table>
+      <div class="lb-status" id="lbStatus"></div>
+      <div class="lb-actions">
+        <button class="lb-secondary" id="bLbClose">CLOSE</button>
+      </div>
+    </div>
+  </div>
 
   <div id="top">
     <button id="bMute" title="Mute (M)" aria-label="Mute sound">SND</button>
@@ -130,6 +186,77 @@ button{font-family:var(--display);cursor:pointer;color:var(--fg);border:0}
 (()=>{
 const $=id=>document.getElementById(id);
 const wrap=$('wrap'),cv=$('c'),ctx=cv.getContext('2d');
+
+/* ---------- global leaderboard ---------- */
+/*
+  Supabase configuration:
+  1. Create a Supabase project.
+  2. Run the SQL from SUPABASE_SETUP.sql in the SQL Editor.
+  3. Paste your Project URL and Publishable key below.
+  Leave them blank to use local-only scores until the backend is configured.
+*/
+const SUPABASE_URL='';
+const SUPABASE_PUBLISHABLE_KEY='';
+const supabaseClient=(window.supabase&&SUPABASE_URL&&SUPABASE_PUBLISHABLE_KEY)
+  ? window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY)
+  : null;
+let playerName='';
+try{playerName=localStorage.getItem('rh_player_name')||''}catch(e){}
+function cleanName(v){return String(v||'').trim().replace(/[^a-zA-Z0-9 _.-]/g,'').slice(0,24)}
+function hasGlobalLeaderboard(){return !!supabaseClient}
+function savePlayerName(v){playerName=cleanName(v);try{localStorage.setItem('rh_player_name',playerName)}catch(e){}}
+function openDriverModal(){
+  $('driverModal').hidden=false;
+  $('playerName').value=playerName;
+  $('driverStatus').textContent='';
+  setTimeout(()=>$('playerName').focus(),30);
+}
+function closeDriverModal(){$('driverModal').hidden=true}
+function beginRace(){
+  const n=cleanName($('playerName').value);
+  if(!n){$('driverStatus').textContent='Please enter a driver name.';$('playerName').focus();return}
+  savePlayerName(n);closeDriverModal();startGame();
+}
+async function submitGlobalScore(){
+  if(!supabaseClient||!playerName)return;
+  const payload={
+    player_name:playerName,
+    score:Math.max(0,Math.floor(score)),
+    distance:Number((pos/KM).toFixed(2)),
+    top_speed:Math.round(topSpd/50),
+    near_misses:nearCount
+  };
+  const {error}=await supabaseClient.from('leaderboard').insert(payload);
+  if(error)console.warn('Leaderboard submission failed:',error.message);
+}
+function localLeaderboard(){
+  let arr=[];try{arr=JSON.parse(localStorage.getItem('rh_scores')||'[]')}catch(e){}
+  arr.push({player_name:playerName||'Driver',score:Math.floor(score)});
+  arr.sort((a,b)=>b.score-a.score);arr=arr.slice(0,10);
+  try{localStorage.setItem('rh_scores',JSON.stringify(arr))}catch(e){}
+  return arr;
+}
+async function loadLeaderboard(){
+  const body=$('lbBody');body.innerHTML='<tr><td colspan="3" class="lb-empty">Loading rankings…</td></tr>';
+  $('lbStatus').textContent=hasGlobalLeaderboard()?'Global leaderboard connected.':'Global leaderboard is not configured yet; showing this browser\'s scores.';
+  let rows=[];
+  if(supabaseClient){
+    const {data,error}=await supabaseClient.from('leaderboard')
+      .select('player_name,score')
+      .order('score',{ascending:false})
+      .limit(10);
+    if(!error&&data)rows=data;
+    else $('lbStatus').textContent='Could not load global rankings right now.';
+  }else{
+    rows=localLeaderboard();
+  }
+  if(!rows.length){body.innerHTML='<tr><td colspan="3" class="lb-empty">No scores yet. Be the first!</td></tr>';return}
+  body.innerHTML=rows.map((r,i)=>'<tr class="'+(r.player_name===playerName?'me':'')+'"><td class="lb-rank">'+(i+1)+'</td><td>'+escapeHtml(r.player_name)+'</td><td>'+fmt(r.score)+'</td></tr>').join('');
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+async function openLeaderboard(){$('leaderboardModal').hidden=false;await loadLeaderboard()}
+function closeLeaderboard(){$('leaderboardModal').hidden=true}
+
 const R=Math.random,rnd=(a,b)=>a+R()*(b-a),pick=a=>a[R()*a.length|0];
 const clamp=(v,a,b)=>v<a?a:v>b?b:v,lerp=(a,b,t)=>a+(b-a)*t;
 const hx=h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
@@ -322,7 +449,7 @@ function gameOver(){
   const rec=score>best;if(rec){best=Math.floor(score);try{localStorage.setItem('rh_best',best)}catch(e){}}
   $('oRec').textContent=rec?'NEW PERSONAL BEST':'STAGE '+(stage+1)+' · '+TH[stage%5].name;
   $('oKm').textContent=(pos/KM).toFixed(2)+' km';$('oScore').textContent=fmt(score);
-  $('oTop').textContent=Math.round(topSpd/50)+' km/h';$('oNear').textContent=nearCount;$('mBest').textContent=fmt(best);
+  $('oTop').textContent=Math.round(topSpd/50)+' km/h';$('oNear').textContent=nearCount;$('mBest').textContent=fmt(best);localLeaderboard();submitGlobalScore().then(()=>loadLeaderboard());
 }
 function togglePause(){
   if(state!=='play')return;paused=!paused;
@@ -337,7 +464,7 @@ addEventListener('keydown',e=>{
   if(e.repeat)return;
   if(e.code==='KeyP'||e.code==='Escape')togglePause();
   if(e.code==='KeyM')toggleMute();if(e.code==='KeyF')fullscreen();
-  if(e.code==='Enter'&&(state==='menu'||(state==='over'&&overT<=0)))startGame();
+  if(e.code==='Enter'&&(state==='menu'||(state==='over'&&overT<=0))){if(playerName)startGame();else openDriverModal();}
 });
 addEventListener('keyup',e=>{const k=KEYMAP[e.code];if(k)keys[k]=false});
 addEventListener('blur',()=>{for(const k in keys)keys[k]=false});
@@ -346,7 +473,7 @@ document.querySelectorAll('#touch button').forEach(b=>{
   b.addEventListener('pointerdown',on);b.addEventListener('pointerup',off);b.addEventListener('pointercancel',off);b.addEventListener('pointerleave',off);
 });
 addEventListener('touchstart',()=>{if(!isTouch){isTouch=true;wrap.classList.add('touch')}},{passive:true});
-$('bStart').onclick=startGame;$('bAgain').onclick=startGame;$('bMute').onclick=toggleMute;$('bPause').onclick=togglePause;$('bFull').onclick=fullscreen;
+$('bStart').onclick=()=>playerName?startGame():openDriverModal();$('bAgain').onclick=()=>playerName?startGame():openDriverModal();$('bMute').onclick=toggleMute;$('bPause').onclick=togglePause;$('bFull').onclick=fullscreen;$('bLeaderboard').onclick=openLeaderboard;$('bLbClose').onclick=closeLeaderboard;$('bDriverStart').onclick=beginRace;$('bDriverCancel').onclick=closeDriverModal;$('playerName').addEventListener('keydown',e=>{if(e.key==='Enter')beginRace()});
 $('mBest').textContent=fmt(best);
 const PCOLS=[[214,26,44],[245,158,11],[14,165,233],[34,197,94],[168,85,247],[226,232,240]];
 try{pci=+localStorage.getItem('rh_col')||0}catch(e){}
